@@ -1,14 +1,12 @@
-/// <refer
 /*
  * @Author: Xavier Yin
  * @Date: 2021-11-23 22:21:15
  * @Last Modified by: Xavier Yin
- * @Last Modified time: 2021-11-24 00:17:03
+ * @Last Modified time: 2021-12-19 23:13:25
  */
 import { useState, useMemo, useReducer, useRef, useCallback } from 'react';
 import { storeReducer, loadingReducer } from './reducer';
 import { isPlainObject, isFunction, loget, loset, isThenable } from './utils';
-import ReactMedux from './types/useMeduxStore.d';
 
 // ---------------------------------------------------------------------
 
@@ -18,27 +16,31 @@ const initLoadingReducerState = (names: string[]) =>
     // 默认初始化所有加载状态都是为否
     state[name] = false;
     return state;
-  }, {});
+  }, {} as ReactMedux.MeduxLoading);
 
 /**
  * The hook being similar to useReducer which is provided by React can be
  * multiple and independent stores that manage states for react components.
  */
 function useMeduxStore(
-  reducers?: StoreReducers,
-  initialState?: StoreState,
-  init?: StoreInit,
+  reducers?: ReactMedux.MeduxReducers,
+  initialState?: ReactMedux.MeduxState,
+  init?: ReactMedux.MeduxReducerInitializer,
 ) {
-  const [[storeReducers, storeInitialState, storeInit]]: [
-    MeduxStorePropsTuple,
-  ] = useState<MeduxStorePropsTuple>([
+  const [[storeReducers, storeInitialState, storeInit]] = useState<
+    [
+      ReactMedux.MeduxReducers,
+      ReactMedux.MeduxState,
+      ReactMedux.MeduxReducerInitializer,
+    ]
+  >([
     { ...reducers },
-    isPlainObject(initialState) ? initialState : {},
-    init,
+    (isPlainObject(initialState) ? initialState : {}) as ReactMedux.MeduxState,
+    init as ReactMedux.MeduxReducerInitializer,
   ]);
 
   // 备份初始化状态值
-  const [initialStateBackup] = useState<StoreState>({
+  const [initialStateBackup] = useState<ReactMedux.MeduxState>({
     ...initialState,
   });
 
@@ -48,11 +50,10 @@ function useMeduxStore(
     [storeReducers],
   );
 
-  const [storeState, storeDispatch] = useReducer(
-    storeReducer,
-    storeInitialState,
-    storeInit,
-  );
+  const [storeState, storeDispatch] = useReducer<
+    ReactMedux.MeduxReactReducer,
+    ReactMedux.MeduxState
+  >(storeReducer, storeInitialState, storeInit);
 
   // 维护所有 core reducer 执行状态
   const [loadingState, loadingDispatch] = useReducer(
@@ -66,24 +67,24 @@ function useMeduxStore(
       storeReducerNames.reduce((state, name) => {
         state[name] = 0;
         return state;
-      }, {}),
+      }, {} as ReactMedux.PO),
     [storeReducerNames],
   );
 
   const counterRef = useRef(counter);
-  const dispatchRef = useRef<Dispatch>();
+  const dispatchRef = useRef<ReactMedux.MeduxDispatch>();
   const loadingStateRef = useRef(loadingState);
-  const storeStateRef = useRef<StoreState>(storeState);
+  const storeStateRef = useRef<ReactMedux.MeduxState>(storeState);
 
   storeStateRef.current = storeState;
 
-  const operations: Operations = useMemo(() => {
+  const operations: ReactMedux.MeduxActionOperations = useMemo(() => {
     // 只允许对 plain object 进行操作
-    const merge = (payload: PayloadObject) => {
-      if (isPlainObject(payload)) storeDispatch({ type: 'merge', paylod });
+    const merge: ReactMedux.OperationMerge = (payload) => {
+      if (isPlainObject(payload)) storeDispatch({ type: 'merge', payload });
     };
 
-    const reset = (payload: PayloadObject) => {
+    const reset: ReactMedux.OperationReset = (payload) => {
       if (isPlainObject(payload)) {
         storeDispatch({ type: 'reset', payload });
       } else {
@@ -98,28 +99,44 @@ function useMeduxStore(
       }
     };
 
-    const clear = () => storeDispatch({ type: 'clear' });
+    const clear: ReactMedux.OperationClear = () =>
+      storeDispatch({ type: 'clear' });
 
     // 支持直接 set 一个 Plain Object（等同于 merge 操作）或者按路 namePath 设置 value
-    const set = (namePath: PayloadObject | NamePath, value?: any) => {
+    const set = (
+      namePath: ReactMedux.MeduxActionPayload | ReactMedux.NamePath,
+      value: any,
+    ) => {
       // if namePath is a PayloadObject
       if (isPlainObject(namePath)) {
-        merge(namePath);
+        merge(namePath as ReactMedux.MeduxActionPayload);
       } else {
         // when the namePath is a NamePath
         storeDispatch({
           type: 'merge',
-          payload: loset({ ...storeStateRef.current }, namePath, value),
+          payload: loset(
+            { ...storeStateRef.current },
+            namePath as ReactMedux.NamePath,
+            value,
+          ),
         });
       }
     };
 
-    const get = (namePath: NamePath, defaultValue?: any) =>
+    const get: ReactMedux.OperationGet = (namePath, defaultValue?) =>
       loget(storeStateRef.current, namePath, defaultValue);
 
-    const call = (...args) => dispatchRef.current(...args);
+    const call: ReactMedux.OperationCall = (action, payload, ...args) =>
+      dispatchRef.current?.(action, payload, ...args);
 
-    return { merge, reset, clear, set, get, call };
+    return {
+      merge,
+      reset,
+      clear,
+      set,
+      get,
+      call,
+    } as ReactMedux.MeduxActionOperations;
   }, [storeDispatch, storeInit, initialStateBackup]);
 
   // 更新 store 的 reduce 函数执行状态
@@ -137,9 +154,9 @@ function useMeduxStore(
   );
 
   const handleAction = useCallback(
-    (action: Action) => {
+    (action: ReactMedux.MeduxAction) => {
       const { type } = action;
-      const reduce = <StoreReducer>storeReducers?.[type];
+      const reduce = storeReducers?.[type];
       // 如果不存在 action 中指定的 reduce 函数，则直接退出
       if (!isFunction(reduce)) return;
 
@@ -178,14 +195,14 @@ function useMeduxStore(
           () => null,
         );
       } else {
-        operations.merge(result);
+        operations.merge(result as ReactMedux.MeduxActionPayload);
       }
     },
     [storeReducers, updateLoadingState, operations],
   );
 
-  const dispatch: Dispatch = useMemo(() => {
-    const fn = (action, payload, ...args) => {
+  const dispatch: ReactMedux.MeduxDispatch = useMemo(() => {
+    const fn: ReactMedux.MeduxDispatch = ((action, payload, ...args) => {
       // 传入 action 为对象时，直接触发 dispatch
       if (isPlainObject(action)) return handleAction(action);
 
@@ -202,7 +219,7 @@ function useMeduxStore(
         return fn(result);
       }
       return undefined;
-    };
+    }) as ReactMedux.MeduxDispatch;
 
     // 添加 reducers 的 type 作为 dispatch 方法名，以便快速调用。
     // 例如：reducers = {getName(state, action) {}}
@@ -222,17 +239,14 @@ function useMeduxStore(
     };
 
     // 批量获取 store state 值，返回数组
-    fn.getStates = (...namePaths: NamePath[]) =>
+    fn.getStates = (...namePaths) =>
       namePaths.map((namePath) => operations.get(namePath));
 
     // 直接更新 store
     // [警告]设置 state，小心使用(所有的 state 变化应该通过 reducer 来更新)
-    fn.setState = (
-      namePath: ReactMedux.PayloadObject | ReactMedux.NamePath,
-      value?: any,
-    ) => {
+    fn.setState = (namePath, value?: any) => {
       // 设置
-      operations.set(namePath, value);
+      operations.set(namePath as ReactMedux.NamePath, value);
     };
 
     return fn;
@@ -240,7 +254,7 @@ function useMeduxStore(
 
   dispatchRef.current = dispatch;
 
-  const store: MeduxStore = useMemo(
+  const store: ReactMedux.MeduxStore = useMemo(
     () => ({
       dispatch,
       loading: loadingState,
